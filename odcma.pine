@@ -1,0 +1,86 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © peacefulLizard50262
+
+//@version=5
+indicator("ODCMA", overlay = true)
+
+filter(float src, int len = 1) =>
+    var float filter = na
+    filter := ta.cum((src + (src[1] * 2) + (src[2] * 2) + src[3])/6)
+    len > 0 ? (filter - filter[len])/len : src
+
+normalize(float src, int len) =>
+    out = (src - ta.lowest(src, len)) / (ta.highest(src, len) - ta.lowest(src, len))
+    out
+
+outlier(series float source, int periods = 30, float max = 2, int length = 100, bool other = false) =>
+    float out = math.abs(((source - source[1])/math.sqrt((math.sum(math.pow(source - source[1], 2), periods) - math.pow(source - source[1], 2))/(periods - 2))))
+    float tr = open > close ? -normalize(high - low, length) : normalize(high - low, length) 
+    outlier_tr = tr > 0.5 ? true : tr < -0.5 ? true : false
+    outlier = out >= max ? true : false
+    other ? outlier_tr : outlier
+
+outlier_volume(series float source, int periods = 30, float max = 2, int length = 100, bool other = false) =>
+    volume_high = open < close ? volume : 0
+    volume_low = open > close ? -volume : 0
+    float out = math.abs(((source - source[1])/math.sqrt((math.sum(math.pow(source - source[1], 2), periods) - math.pow(source - source[1], 2))/(periods - 2))))
+    float tr = open > close ? -normalize(volume_high - volume_low, length) : normalize(volume_high - volume_low, length) 
+    outlier_tr = tr > 0.5 ? true : tr < -0.5 ? true : false
+    outlier = out >= max
+    other ? outlier_tr : outlier
+
+odma(float src = close, int len = 20, float max = 2, string swch = "Price", int length = 100, bool other = false, bool ext = na, int smoothing = 0) => // TODO: You will need an input string forisNewPeriod.
+	var float rolling_length = na
+	var float swma = na
+    var bool  outlier = na
+	var bool  outlier_vol = na
+    outlier := outlier(src, len, max, length, other) 
+    outlier_vol := outlier(volume, len, max, length, false) 
+    outlier := outlier(src, len, max, length, other) 
+
+	outlier_swch = swch == "Price" ? outlier : swch == "Volume" ? outlier_vol : swch == "Price or Volume" ? outlier or outlier_vol : swch == "Price and Volume" ? outlier and outlier_vol : ext
+
+	rolling_length := outlier_swch ? 1 : 1 + rolling_length[1]
+	swma := outlier_swch ? math.avg(src, src[1]) : src + swma[1]
+	result = ta.wma(ta.sma(swma / rolling_length, 2), 3)
+	filter(result, smoothing)
+
+odvwap(float src = close, int len = 200, float max = 3, string swch = "Volume", int length = 100, bool other = false, bool ext = na, int smoothing = 0) => // TODO: You will need an input string forisNewPeriod.
+	var float sumSrcVol = na
+	var float sumVol = na
+    var bool  outlier = na
+    var bool  outlier_vol = na
+    outlier_vol := outlier_volume(volume, len, max, length, other) 
+    outlier := outlier(src, len, max, length, other) 
+	outlier_swch = swch == "Price" ? outlier : swch == "Volume" ? outlier_vol : swch == "Price or Volume" ? outlier or outlier_vol : swch == "Price and Volume" ? outlier and outlier_vol : ext
+	sumSrcVol := outlier_swch ? math.avg(src * volume, src[1] * volume[1]) : src * volume + sumSrcVol[1]
+	sumVol := outlier_swch  ? math.avg(volume, volume[1]) : volume + sumVol[1]
+	result = sumSrcVol / sumVol
+	filter(result, smoothing)
+
+
+src = input.source(close, "Source")
+smoothing = input.int(0, "Smoothing", 0)
+weight = input.bool(true, "Volume Weighting")
+swch = input.string("Price and Volume", "Outlier Detection", ["Price","Volume","Price or Volume","Price and Volume", "Pivot Point"])
+len = input.int(30, "Outlier Length", 2)
+max = input.float(3, "Outlier Detection Level", 0)
+other = input.bool(false, "True Range Detection", "Enable to use true range instead of standard deviation")
+length = input.int(100, "True Range Normalization Length")
+log_space = input.bool(false, "Log Space")
+
+leftLenH = input.int(10, "Pivot High", 1, inline="Pivot High", group= "Pivot Points")
+rightLenH = input.int(10, "/", 1, inline="Pivot High", group= "Pivot Points")
+leftLenL = input.int(10, "Pivot Low", 1, inline="Pivot Low", group= "Pivot Points")
+rightLenL = input.int(10, "/", 1, inline="Pivot Low", group= "Pivot Points")
+pivot = ta.pivothigh(leftLenH, rightLenH) or ta.pivotlow(leftLenL, rightLenL)
+
+
+ma() =>
+	switch weight
+		true => log_space ? math.exp(odvwap(math.log(src), len, max, swch, length, other, pivot, smoothing)) :odvwap(src, len, max, swch, length, other, pivot, smoothing)
+		false => log_space ? math.exp(odma(math.log(src), len, max, swch, length, other, pivot, smoothing)) : odma(src, len, max, swch, length, other, pivot, smoothing)
+
+
+plot(ma(), color = close > ma() ? color.green : color.red)
+
